@@ -31,10 +31,10 @@ var getIdValue = function getIdValue(m, data) {
   return data && data[idName(m)];
 };
 
-var cascadeDeletes = function cascadeDeletes(modelId, Model, options) {
+var cascadeDeletes = function cascadeDeletes(modelId, Model, options,instance) {
   return _promise2.default.all(options.relations.map(function () {
     var _ref = (0, _asyncToGenerator3.default)( /*#__PURE__*/_regenerator2.default.mark(function _callee2(relationData) {
-      var relation, relationForeignKey, relationDeepDelete, relationModel, relationKey, where, instancesToDelete;
+      var relation, relationForeignKey, relationDeepDelete,referenceIds, relationModel, relationKey, where, instancesToDelete;
       return _regenerator2.default.wrap(function _callee2$(_context2) {
         while (1) {
           switch (_context2.prev = _context2.next) {
@@ -49,7 +49,6 @@ var cascadeDeletes = function cascadeDeletes(modelId, Model, options) {
                 relationForeignKey = relationData.foreignKey;
                 relationDeepDelete = relationData.deepDelete;
               } else relation = relationData;
-
               if (relation) {
                 _context2.next = 6;
                 break;
@@ -58,7 +57,6 @@ var cascadeDeletes = function cascadeDeletes(modelId, Model, options) {
               throw new Error('Please, set relation name! loopback-cascade-mixin');
 
             case 6:
-
               debug('Relation ' + relation + ' model ' + Model.definition.name);
 
               if (Model.relations[relation]) {
@@ -72,13 +70,24 @@ var cascadeDeletes = function cascadeDeletes(modelId, Model, options) {
             case 10:
               relationModel = Model.relations[relation].modelTo;
               relationKey = relationForeignKey || Model.relations[relation].keyTo;
-
-
               if (Model.relations[relation].modelThrough) {
                 relationModel = Model.relations[relation].modelThrough;
               }
 
               if (relationModel.definition.properties[relationKey]) {
+                if(Model.relations[relation].type === "belongsTo") {
+                  _context2.next = 26;
+                  break;
+                }
+                if(relationKey === 'id' && Model.relations[relation].type && Model.relations[relation].type === "referencesMany") {
+                  referenceIds = [];
+                  if(instance) {
+                    if(Model.relations[relation].keyFrom) {
+                      let rKey = Model.relations[relation].keyFrom;
+                        referenceIds = instance[rKey];
+                    }
+                  }
+                }
                 _context2.next = 15;
                 break;
               }
@@ -87,20 +96,21 @@ var cascadeDeletes = function cascadeDeletes(modelId, Model, options) {
 
             case 15:
               where = {};
-
               where[relationKey] = modelId;
-
               if (!(relationDeepDelete || relationDeepDelete && options.deepDelete)) {
                 _context2.next = 24;
                 break;
               }
 
               _context2.next = 20;
+              if(relationKey === 'id' && Model.relations[relation].type && Model.relations[relation].type === "referencesMany") {
+              return relationModel.find({where: {id: {inq: referenceIds } } });
+              }
+
               return relationModel.find({ where: where });
 
             case 20:
               instancesToDelete = _context2.sent;
-
 
               instancesToDelete.forEach(function () {
                 var _ref2 = (0, _asyncToGenerator3.default)( /*#__PURE__*/_regenerator2.default.mark(function _callee(instance) {
@@ -109,7 +119,7 @@ var cascadeDeletes = function cascadeDeletes(modelId, Model, options) {
                       switch (_context.prev = _context.next) {
                         case 0:
                           _context.next = 2;
-                          return instance.destroy();
+                           return instance.destroy();
 
                         case 2:
                         case 'end':
@@ -128,9 +138,13 @@ var cascadeDeletes = function cascadeDeletes(modelId, Model, options) {
 
             case 24:
               _context2.next = 26;
+              if(relationKey === 'id') {
+              return relationModel.destroyAll({id: {inq: referenceIds} });
+              }
               return relationModel.destroyAll(where);
 
             case 26:
+            _context2.next = 'end';
             case 'end':
               return _context2.stop();
           }
@@ -145,12 +159,24 @@ var cascadeDeletes = function cascadeDeletes(modelId, Model, options) {
 };
 
 exports.default = function (Model, options) {
-  Model.observe('after delete', function (ctx) {
+  let instance;
+   Model.observe('before delete', function (ctx,next) {
+    Model.findOne({where: ctx.where},(err,data) => {
+      instance = data;
+      next();
+    });
+  });
+  Model.observe('after delete', function (ctx, next) {
+    if (!instance) {
+    return next();
+    }
     var name = idName(Model);
     var hasInstanceId = ctx.instance && ctx.instance[name];
     var hasWhereId = ctx.where && ctx.where[name];
+    if(!hasWhereId) {
+      hasWhereId = ctx.where && ctx.where['_id'];
+    }
     var hasMixinOption = options && Array.isArray(options.relations);
-
     if (!(hasWhereId || hasInstanceId)) {
       debug('Skipping delete for ', Model.definition.name);
       return _promise2.default.resolve();
@@ -162,8 +188,9 @@ exports.default = function (Model, options) {
     }
 
     var modelInstanceId = getIdValue(Model, ctx.instance || ctx.where);
-
-    return cascadeDeletes(modelInstanceId, Model, options).then(function () {
+    if (!modelInstanceId && instance)
+      modelInstanceId = ( instance._id|| instance.id );
+    return cascadeDeletes( modelInstanceId, Model, options,instance).then(function () {
       debug('Cascade delete has successfully finished');
       return true;
     }).catch(function (err) {
