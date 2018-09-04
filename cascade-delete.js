@@ -138,7 +138,7 @@ var cascadeDeletes = function cascadeDeletes(modelId, Model, options,instance) {
 
             case 24:
               _context2.next = 26;
-              if(relationKey === 'id') {
+              if(relationKey === 'id' && Model.relations[relation].type && Model.relations[relation].type === "referencesMany") {
               return relationModel.destroyAll({id: {inq: referenceIds} });
               }
               return relationModel.destroyAll(where);
